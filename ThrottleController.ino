@@ -1,7 +1,11 @@
+
 #include <Wire.h>
 #include <Adafruit_MCP23X08.h>
+#include <Adafruit_TinyUSB.h>
+#include "Cougar.h"
 
 Adafruit_MCP23X08 mcp;
+CougarHIDReport cougar;
 
 /* 
  * The thrustmaster cougar throttle uses a mostly standard matrix for the
@@ -61,11 +65,33 @@ unsigned int  fps              = 0;     // fps calculated during the previous in
 unsigned int  updateCounter    = 0;
 unsigned int  updates          = 0;     // number of updates we're issuing per second. Can be different from the fps, which is number of checks
 
-void setup() {
 
+// USB HID object. For ESP32 these values cannot be changed after this declaration
+// desc report, desc len, protocol, interval, use out endpoint
+Adafruit_USBD_HID usb_hid(cougar_report_desc, sizeof(cougar_report_desc), HID_ITF_PROTOCOL_NONE, 2, false);
+
+void setup() {
+#if defined(ARDUINO_ARCH_MBED) && defined(ARDUINO_ARCH_RP2040)
+  // Manual begin() is required on core without built-in support for TinyUSB such as mbed rp2040
+  TinyUSB_Device_Init(0);
+ #endif
+
+  // Notes: following commented-out functions has no affect on ESP32
+  // usb_hid.setPollInterval(2);
+  // usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
+  bool usbInit = usb_hid.begin();
+  // wait until device mounted
+  while( !TinyUSBDevice.mounted() ) delay(1);
+
+  // Waiting for serial to initialise with the while() causes USB to fail to 
+  // init properly. It seems safe to 'begin' serial, just not to way. 
+  // Either way, to be super safe, just leaving it all here
   Serial.begin(115200);
   while (!Serial);             // wait for serial monitor
-  Serial.println("Beginning setup.");
+  Serial.println("USB initialised, serial started, continuing setup.");
+  if (!usbInit)
+    Serial.println("USB HID failed to start correctly");
+
   
   // Connect to the MCP23008 via i2c
   Wire.begin(20); // Default address is 20 for the MCP23008
@@ -93,8 +119,29 @@ void setup() {
   Serial.println("Finished setup, Beginning loop");
 }
 
+int loopCounter = 0;
+bool bOn = false;
 
 void loop() {
+  if ( !usb_hid.ready() ) return;
+
+  if (loopCounter++ > 200)
+  {
+    loopCounter = 0;
+    if ( !usb_hid.ready() )
+    {
+      Serial.println("USB not yet ready, skipping.");
+      return;
+    }
+
+    Serial.printf("Setting button %u", bOn); Serial.println();
+    CougarHIDReport report;
+    report.setButton(1, bOn);
+    if (!usb_hid.sendReport(0, report.getReportData(), report.getReportSize()))
+      Serial.println("Failed to send report.");
+    bOn = !bOn;
+  }
+
   bool changesDetected = false;
 
   // First read the analog pins on the QT Py board itself
@@ -164,8 +211,8 @@ void loop() {
   if (changesDetected)
   {
     updateCounter++;
-    dumpState();
-    Serial.println("");
+    //dumpState();
+    //Serial.println("");
   }
 
   // Lastly, for debug purposes, lets check if it's time to
