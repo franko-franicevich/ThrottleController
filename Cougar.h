@@ -203,7 +203,7 @@ static uint8_t cougar_report_desc[] = {
     0x95, 0x0A,                    // Report Count (10)
     0x81, 0x02,                    // INPUT (Data,Var,Abs)
 
-    0x75, 0x14,                    //      REPORT_SIZE () Padding Zeros to bring this to the next int32 boundary
+    0x75, 0x06,                    //      REPORT_SIZE () Padding Zeros to bring this to the next byte boundary
     0x95, 0x01,                    //      REPORT_COUNT (1)
     0x81, 0x03,                    //      INPUT (Cnst,Var,Abs)
 
@@ -220,7 +220,7 @@ typedef struct {
     // 2nd word
     uint8_t rng          ; // Ry axis
     uint16_t buttons : 10; // 10 buttons (1 bit each)
-    uint16_t padding : 14;  // padding to align to 32-bit boundary
+    uint16_t padding : 6;  // padding to align to 8-bit boundary
 } CougarHIDReport_t;
 
 class CougarHIDReport {
