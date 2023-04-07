@@ -25,37 +25,34 @@ const int rowPins[numRows] = {5,6,7};   // The mcp23008 pins for the ROWS in our
 const int colPins[numCols] = {1,2,3,4}; // the mcp23008 pins for the COLUMNS in our bytton matrix
 
 // For ROW x, COL y, maps to the cougar button maps ID:
-const int ButtonMap[numRows][numCols] = {
-  { 2, 3, 5, 5 },
+// Note that this is 1 indexed, not zero indexed like the
+// rest of the code, as 0 here means 'no matching button'
+const uint8_t ButtonMap[numRows][numCols] = {
+  { 6, 1, 0, 0 },  // This row only has two colums connected. The last two will never 'trigger', so don't need to be checked.
   { 7, 8, 9, 10},
-  { 6, 1, 0, 0 }  // This row only has two colums connected. The last two will never 'trigger', so don't need to be checked.
+  { 2, 3, 4, 5 }
 };
 
-// QT Py board pin assignments. 
-// Index in to the analogPins array to map the controller feature to a board pin. 
-// eg, the throttle is on analogPins[THROTTLE_PIN] - that is, A0
-// All these pins had 12-bit read resolution
-#define THROTTLE_PIN = 0
-#define RNG_PIN      = 1
-#define ANT_PIN      = 2
-#define MY_PIN       = 3
-#define MX_PIN       = 4
-const int analogPins[] = {A0, A1, A2, A3, A6}; // The QT Py board pins these pots are connected to. A4/5 are used for the ic2 bus.
-const int numAnalogPins = 5;
-const int readResolution = 12;  // default read resolution is 10 bits, but this samd21 board supports 12 bit.
+// QT Py board pin assignments for each control
+#define THROTTLE_PIN A0
+#define RNG_PIN      A1
+#define ANT_PIN      A2
+#define MY_PIN       A3
+#define MX_PIN       A6 // A4/5 are used for the ic2 bus.
+const int readResolution = 12;  // default read resolution is 10 bits, this samd21 board supports 12 bit. We only need 8 bit though/ Read at 10, then smooth, then downcast to 8 bit.
 
-// Our reads have a lot of noise. Thes two parameters can reduce it
-// in different ways. Jitterbits is not the same as reducing read resolution:
-// it impacts how likely we are to detect changes and notify the host OS.
-// numReads is how many times we read each pin, and getting the average result of all the reads.
-size_t   jitterBits = 2;   // number of bits we'll ignore for purpose of detecting changes. Testing shows that we have to go to  4 bits jitter to make a difference, so not worth it.
-uint16_t numReads   = 4;   // Number of times we read each pin. We use multiple samples and average the results instead
+/* READ NOISE
+ Our reads have a lot of noise. We have three techniques for reducing the noise:
+1. Perform multiple reads for each sample.
+2. Use a smoothing library on the final sample with an exponential sampling
+3. Ignore a new read if it's delta is smaller than a threshold.
+Some of these settings are handled in the Cougar.h class.
+*/
+uint16_t numReads   = 3;   // Number of times we read each pin. We use multiple samples and average the results instead
 
 // Board state.
-bool lightOn = false;
-uint16_t previousKeyState = 0u; // This is a bitmap containing state of buttons 1-10. Default to 'off'
-uint16_t debounceState    = 0u; // if keystate changes, store it here. We don't issue changes UNTIL the debounce state from 1 ms ago matches current read keystate
-uint16_t oldAnalogState[]  = {0, 0, 0, 0, 0};
+//bool lightOn = false;
+//uint16_t debounceState    = 0u; // if keystate changes, store it here. We don't issue changes UNTIL the debounce state from 1 ms ago matches current read keystate
 
 // every second or so, we calculate what our FPS is for performance monitoring
 unsigned long lastFPSCheck     = 0;     // When did we last check and write performance stats? (in milliseconds since board start)
@@ -64,7 +61,6 @@ unsigned int  fpsCounter       = 0;     // The number of frames since the lastFP
 unsigned int  fps              = 0;     // fps calculated during the previous interval
 unsigned int  updateCounter    = 0;
 unsigned int  updates          = 0;     // number of updates we're issuing per second. Can be different from the fps, which is number of checks
-
 
 // USB HID object. For ESP32 these values cannot be changed after this declaration
 // desc report, desc len, protocol, interval, use out endpoint
@@ -114,57 +110,34 @@ void setup() {
     mcp.pinMode(colPins[c], INPUT); // no need for INPUT_PULLUP, the throttle already has a pullup resistor in the circuit.
 
   analogReadResolution(readResolution);
+  cougar.setReadResolution(readResolution); // So the cougar knows how to downsample if we're reading > 8
 
   lastFPSCheck = millis(); // Initialise our 'last fps check' just prior to doing our first loop
   Serial.println("Finished setup, Beginning loop");
 }
 
-int loopCounter = 0;
-bool bOn = false;
+uint16_t readAxis(uint16_t pin)
+{
+  // Read each input multiple times and calculate average to try reduce noise.
+  // This makes very little difference to performance, as it's the matrix 
+  // keyboard read on the i2c mcp below that makes up for 80% of our compute.
+  uint16_t newState = 0;
+  for (int n = 0; n < numReads; n++)
+      newState += analogRead(pin);
+  return newState/numReads;
+}
 
 void loop() {
   if ( !usb_hid.ready() ) return;
 
-  if (loopCounter++ > 200)
-  {
-    loopCounter = 0;
-    if ( !usb_hid.ready() )
-    {
-      Serial.println("USB not yet ready, skipping.");
-      return;
-    }
-
-    Serial.printf("Setting button %u", bOn); Serial.println();
-    CougarHIDReport report;
-    report.setButton(1, bOn);
-    if (!usb_hid.sendReport(0, report.getReportData(), report.getReportSize()))
-      Serial.println("Failed to send report.");
-    bOn = !bOn;
-  }
-
-  bool changesDetected = false;
-
-  // First read the analog pins on the QT Py board itself
-  uint16_t newAnalogState[] = {0,0,0,0,0};
-  // Read each input multiple times and calculate average to try reduce noise.
-  // This makes very little difference to performance, as it's the matrix 
-  // keyboard read on the i2c mcp below that makes up for 80% of our compute.
-  for (int n = 0; n < numReads; n++)
-    for (int i = 0; i < numAnalogPins; i++)
-      newAnalogState[i] += analogRead(analogPins[i]);
   // numAnalogPins now contains totals for numReads reads: 
   // So divide each check by numReads to get the average.
-  for (int i = 0; i < numAnalogPins; i++)
-    newAnalogState[i] = newAnalogState[i]/numReads;
-
-  // see if there were any changes.... we ignore least significant X bits for the comparison
-  // to reduce jitter impacting our detection of too many changes.
-  // Testing shows we can half the number of updates by ignoreing low 4 bits for 'changes'
-  if (detectChangesWithJitter(oldAnalogState, newAnalogState, 5, jitterBits)) {
-    changesDetected = true;
-    memcpy(oldAnalogState, newAnalogState, sizeof(oldAnalogState));
-  }
-
+  cougar.setThrottle((1<<readResolution)-readAxis(THROTTLE_PIN)-1); // throttle is inverted, so subtract read value from max possible read value based on resolution
+  //cougar.setThrottle(readAxis(THROTTLE_PIN)); // throttle is inverted, so subtract read value from max possible read value based on resolution
+  cougar.setRng(readAxis(RNG_PIN));
+  cougar.setAnt(readAxis(ANT_PIN));
+  cougar.setMx(readAxis(MX_PIN));
+  cougar.setMy(readAxis(MY_PIN));   
   
   // Next, read the button matrix on the MCP23008 extender
   // Keep newly read state in keyState which we will compare to previousKeyState later.
@@ -173,46 +146,37 @@ void loop() {
   for (uint8_t row = 0; row < numRows; row++) {
     mcp.digitalWrite(rowPins[row], LOW);
     for (uint8_t col = 0; col < numCols; col++) {
-      if (!mcp.digitalRead(colPins[col])) {
-        bitWrite(keyState, row * numCols + col, 1);
+      // Not all matrix postions have a valid button on the Cougar!
+      if (ButtonMap[row][col])
+      {
+        uint8_t buttonIndex = ButtonMap[row][col] - 1;
+        bool value = !mcp.digitalRead(colPins[col]); // HIGH means not pressed, LOW means pressed.
+        cougar.setButton(buttonIndex, value);
       }
     }
     mcp.digitalWrite(rowPins[row], HIGH);
   }
 
-  // Is the new state different from what's in the old state?
-  // If it's different from OLD STATE, but the same as debounceState
-  // then act on the changes
-  // If it's difference and also different to debounce state, then
-  // it's not stabilsed. Update debounce state till next loop
-
-  if ( keyState != previousKeyState && keyState != debounceState)
+  if (cougar.hasChanged())
   {
-    // We've not stabilised. Store debounce, and move on.
-    //dumpKeyState( "Changes detected, need to debounce.", previousKeyState, debounceState, keyState );
-    debounceState = keyState;
-  }
-  else if ( keyState != previousKeyState && keyState == debounceState )
-  {
-    // we've stabilised, debounce successful, so now act on the changes.
-    // dumpKeyState( "Changes detected, debounced, acting.", previousKeyState, debounceState, keyState );
+    // If there are button state changes, then make sure the LED light
+    // reflects our button state: we light up if a button is on.
+    if (cougar.detectButtonChanges())
+    {
+      if (cougar.isAnyButtonOn())
+        mcp.digitalWrite(blinkPin, HIGH);
+      else
+        mcp.digitalWrite(blinkPin, LOW);
+    }
 
-    // Set the light as appropriate. We could check to see if it's already on, but
-    // the code here will only act when the state changes, so setting it on or off won't happen often.
-    if (keyState)
-      mcp.digitalWrite(blinkPin, HIGH);
-    else
-      mcp.digitalWrite(blinkPin, LOW);    
-    
-    previousKeyState = keyState;
-    changesDetected = true;
-  }
-
-  if (changesDetected)
-  {
     updateCounter++;
-    //dumpState();
-    //Serial.println("");
+    //cougar.dumpState();
+    //Serial.printf("      - (@ %3u fps with %3u updates/s) %2u report size", fps, updates, cougar.getReportSize());
+    Serial.println("");
+    if (!usb_hid.sendReport(0, cougar.getReportData(), cougar.getReportSize()))
+      Serial.println("Failed to send report.");
+
+    cougar.changesSent();
   }
 
   // Lastly, for debug purposes, lets check if it's time to
@@ -229,53 +193,9 @@ void loop() {
 
     lastFPSCheck = currentMS;
   }
-    
-  //delay(1); // wait a ms, then loop again. Gives us time to debounce.
-  
+ 
 }
 
 
-/* The analog inputs or the controller seems to have a couple bits of read noise
- * where it will jitter in the low order bits. We perform the 'change detect'
- * comparison, but ignore the lowest ignoreBits number of bits
- * the comparison itself compares each matching element in each array in sequence.
- *
-*/
-bool detectChangesWithJitter( uint16_t oldVals[], uint16_t newVals[], size_t arraySize, size_t ignoreBits) {
-  bool changes = false;
-  for (int i = 0; i < arraySize; i++)
-  {
-    // Bitshift the old and new values to remove jitter, then compare them
-    changes = changes || (( oldVals[i] >> ignoreBits) != (newVals[i] >> ignoreBits)); 
-  }
-  return changes;
-}
 
 
-// Dump the current state of the inputs to serial
-void dumpState(){
-  char s1[13];
-  uint16_to_binary_string(previousKeyState, s1, 13);
-  Serial.printf("%s   %4u %4u %4u %4u %4u      - (@ %3u fps with %3u updates/s)", s1, oldAnalogState[0] >> jitterBits, oldAnalogState[1] >> jitterBits, oldAnalogState[2] >> jitterBits, oldAnalogState[3] >> jitterBits, oldAnalogState[4] >> jitterBits, fps, updates);
-}
-
-/* 
- * Convert uint16 to a formatted binary string with 'X' representing 1,
- * and '.' representing 0. 
- * We use these rather than 1's and 0s to make it easier to spot the difference.
- * bufferLength should be enough to include the null terminator
- */
-void uint16_to_binary_string( uint16_t value, char *buffer, uint8_t bufferLength)
-{
-  // We're going to start with the least significant bit, 
-  // and write it at the end of the buffer, then count down.
-  int len = min(16, bufferLength-1);
-  buffer[len] = 0; // Ensure null termination.
-  for (int i = 0; i < len; i++) {
-    if (value & (1 << i)) {
-      buffer[len - i - 1] = 'X';
-    } else {
-      buffer[len - i - 1] = '.';
-    }
-  }
-}
