@@ -80,10 +80,10 @@ void setup() {
   while( !TinyUSBDevice.mounted() ) delay(1);
 
   // Waiting for serial to initialise with the while() causes USB to fail to 
-  // init properly. It seems safe to 'begin' serial, just not to way. 
+  // init properly. It seems safe to 'begin' serial, just not to wait. 
   // Either way, to be super safe, just leaving it all here
   Serial.begin(115200);
-  while (!Serial);             // wait for serial monitor
+  //while (!Serial);             // wait for serial monitor. On windows, this causes device to fail to init, so commented out.
   Serial.println("USB initialised, serial started, continuing setup.");
   if (!usbInit)
     Serial.println("USB HID failed to start correctly");
@@ -132,8 +132,7 @@ void loop() {
 
   // numAnalogPins now contains totals for numReads reads: 
   // So divide each check by numReads to get the average.
-  cougar.setThrottle((1<<readResolution)-readAxis(THROTTLE_PIN)-1); // throttle is inverted, so subtract read value from max possible read value based on resolution
-  //cougar.setThrottle(readAxis(THROTTLE_PIN)); // throttle is inverted, so subtract read value from max possible read value based on resolution
+  cougar.setThrottle(readAxis(THROTTLE_PIN)); // throttle is inverted, but it seems like games read it like that.
   cougar.setRng(readAxis(RNG_PIN));
   cougar.setAnt(readAxis(ANT_PIN));
   cougar.setMx(readAxis(MX_PIN));
@@ -172,7 +171,7 @@ void loop() {
     updateCounter++;
     //cougar.dumpState();
     //Serial.printf("      - (@ %3u fps with %3u updates/s) %2u report size", fps, updates, cougar.getReportSize());
-    Serial.println("");
+    //Serial.println("");
     if (!usb_hid.sendReport(0, cougar.getReportData(), cougar.getReportSize()))
       Serial.println("Failed to send report.");
 

@@ -187,8 +187,8 @@ static uint8_t cougar_report_desc[] = {
     0x05, 0x01,                    //   Usage Page (Generic Desktop)
 //    0x09, 0x01,                    //     Usage (Pointer)
     0xA1, 0x00,                    //     COLLECTION (Physical)
-    0x09, 0x33,                    //      USAGE (Rx) Cursor
-    0x09, 0x34,                    //      USAGE (Ry) Cursor 
+    0x09, 0x30,                    //      USAGE (X) Cursor
+    0x09, 0x31,                    //      USAGE (Y) Cursor 
     0x16, 0x00, 0x00,              //      Logical Minimum (0)
     0x26, 0xFF, 0x00,              //      Logical Maximum (255) 8 bit. The cursor is pretty jittery and not precise.
     0x75, 0x08,                    //      Report Size (8)
@@ -200,8 +200,8 @@ static uint8_t cougar_report_desc[] = {
     // All 8 bit, like original. Precision is more than good enough here given jitter in readings.
     //0x09, 0xbb,                    //      USAGE (bb) Throttle
     0x09, 0x32,                    //      USAGE Z (32)   (many apps will map this to throttle anyway) Could use 0x36 (slider) instead
-    0x09, 0x35,                    //      USAGE (Rz)
-    0x09, 0x31,                    //      USAGE 31 (Y)
+    0x09, 0x33,                    //      USAGE (Rx)
+    0x09, 0x34,                    //      USAGE 31 (RyY)
     0x95, 0x03,                    //      REPORT_COUNT (3)
     0x81, 0x02,                    //      INPUT (Data,Var,Abs)
 
@@ -253,7 +253,7 @@ struct analogMapping_t {
 
 // these are what we've seen through testing to be the extreme
 // read limits for each input.
-analogMapping_t throttleMap = {25, 225};
+analogMapping_t throttleMap = {30, 230};
 analogMapping_t mxMap = {75, 200};
 analogMapping_t myMap = {65, 190};
 analogMapping_t antMap = {0, 255};
